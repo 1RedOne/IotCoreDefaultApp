@@ -1,13 +1,15 @@
-Windows 10 IoT Core sample code
+Windows 10 IoT Core Default App
 ===============
+
+##An export of a subfolder from the full MS-IoT repository
 
 [Documentation for this sample](https://developer.microsoft.com/en-us/windows/iot/samples/iotdefaultapp) 
 
 ## How to download:
 
-Unfortunately, GitHub does not support downloading individual code. 
+Click the .ZIP button in the upper-right, or clone directly using git shell.
 
-Navigate to [ms-iot/samples](https://github.com/ms-iot/samples) and select **Clone or download** to download the whole repository.
+For the rest of the code, navigate to [ms-iot/samples](https://github.com/ms-iot/samples) and select **Clone or download** to download the whole repository.
 
 
 ## Additional resources
