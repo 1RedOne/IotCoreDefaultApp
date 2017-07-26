@@ -1,31 +1,11 @@
-﻿/*
-    Copyright(c) Microsoft Open Technologies, Inc. All rights reserved.
+﻿// Copyright (c) Microsoft. All rights reserved.
 
-    The MIT License(MIT)
 
-    Permission is hereby granted, free of charge, to any person obtaining a copy
-    of this software and associated documentation files(the "Software"), to deal
-    in the Software without restriction, including without limitation the rights
-    to use, copy, modify, merge, publish, distribute, sublicense, and / or sell
-    copies of the Software, and to permit persons to whom the Software is
-    furnished to do so, subject to the following conditions :
-
-    The above copyright notice and this permission notice shall be included in
-    all copies or substantial portions of the Software.
-
-    THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
-    IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
-    FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT.IN NO EVENT SHALL THE
-    AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
-    LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
-    OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
-    THE SOFTWARE.
-*/
 using System;
+using System.Globalization;
 using Windows.UI.Core;
 using Windows.UI.Xaml;
 using Windows.UI.Xaml.Controls;
-using Windows.UI.Xaml.Input;
 
 // The Blank Page item template is documented at http://go.microsoft.com/fwlink/?LinkId=234238
 
@@ -37,17 +17,72 @@ namespace IoTCoreDefaultApp
     public sealed partial class OOBEWelcome : Page
     {
         private LanguageManager languageManager;
+        private DispatcherTimer timer;
+        private DispatcherTimer countdown;
+
 
         public OOBEWelcome()
         {
             this.InitializeComponent();
 
-            SetupLanguages();
+            this.NavigationCacheMode = Windows.UI.Xaml.Navigation.NavigationCacheMode.Enabled;
+
+            this.DataContext = LanguageManager.GetInstance();
+
+            timer = new DispatcherTimer();
+            timer.Tick += timer_Tick;
+            timer.Interval = TimeSpan.FromSeconds(60);
+
+            countdown = new DispatcherTimer();
+            countdown.Tick += countdown_Tick;
+            countdown.Interval = TimeSpan.FromMilliseconds(100);
+
+            this.Loaded += async (sender, e) =>
+            {
+                await Dispatcher.RunAsync(CoreDispatcherPriority.Low, () =>
+                {
+                    SetupLanguages();
+                    UpdateBoardInfo();
+                    UpdateNetworkInfo();
+
+                    timer.Start();
+                });
+            };
+
+            Unloaded += MainPage_Unloaded;
+        }
+
+        private void MainPage_Unloaded(object sender, RoutedEventArgs e)
+        {
+            timer.Stop();
+            countdown.Stop();
+        }
+
+        private async void countdown_Tick(object sender, object e)
+        {
+            var value = DefaultLanguageProgress.Value + DefaultLanguageProgress.SmallChange * 5;
+            DefaultLanguageProgress.Value = value;
+            if (value >= DefaultLanguageProgress.Maximum)
+            {
+                countdown.Stop();
+                await Window.Current.Dispatcher.RunAsync(CoreDispatcherPriority.Normal, () =>
+                {
+                    NavigationUtils.NavigateToScreen(typeof(MainPage));
+                });
+            }
+        }
+
+        private void timer_Tick(object sender, object e)
+        {
+            timer.Stop();
+            ChooseDefaultLanguage.Visibility = Visibility.Visible;
+            CancelButton.Visibility = Visibility.Visible;
+            countdown.Start();
         }
 
         private void SetupLanguages()
         {
-            languageManager = new LanguageManager();
+            languageManager = LanguageManager.GetInstance();
 
             LanguagesListView.ItemsSource = languageManager.LanguageDisplayNames;
             LanguagesListView.SelectedItem = LanguageManager.GetCurrentLanguageDisplayName();
@@ -59,9 +94,17 @@ namespace IoTCoreDefaultApp
             languageManager.UpdateLanguage(selectedLanguage);
         }
 
-        private async void NextButton_Tapped(object sender, TappedRoutedEventArgs e)
+        private void CancelButton_Clicked(object sender, RoutedEventArgs e)
         {
-            var wifiAvailable = NetworkPresenter.WifiIsAvailable();
+            countdown.Stop();
+            ChooseDefaultLanguage.Visibility = Visibility.Collapsed;
+            CancelButton.Visibility = Visibility.Collapsed;
+        }
+
+        private async void NextButton_Clicked(object sender, RoutedEventArgs e)
+        {
+            var networkPresenter = new NetworkPresenter();
+            var wifiAvailable = networkPresenter.WifiIsAvailable();
             SetPreferences();
             Type nextScreen;
 
@@ -76,8 +119,43 @@ namespace IoTCoreDefaultApp
 
             await Window.Current.Dispatcher.RunAsync(CoreDispatcherPriority.Normal, () =>
             {
+                // If the next screen is the main-page, navigate there, but also launch Cortana to its Consent Page independently
+                if (nextScreen == typeof(MainPage))
+                {
+                    CortanaHelper.LaunchCortanaToConsentPageAsyncIfNeeded();
+                }
                 NavigationUtils.NavigateToScreen(nextScreen);
             });
         }
+
+        private void LanguagesListBox_SelectionChanged(object sender, SelectionChangedEventArgs e)
+        {
+            SetPreferences();
+        }
+
+        private void UpdateBoardInfo()
+        {
+            ulong version = 0;
+            if (!ulong.TryParse(Windows.System.Profile.AnalyticsInfo.VersionInfo.DeviceFamilyVersion, out version))
+            {
+                var loader = new Windows.ApplicationModel.Resources.ResourceLoader();
+                OSVersion.Text = loader.GetString("OSVersionNotAvailable");
+            }
+            else
+            {
+                OSVersion.Text = String.Format(CultureInfo.InvariantCulture, "{0}.{1}.{2}.{3}",
+                    (version & 0xFFFF000000000000) >> 48,
+                    (version & 0x0000FFFF00000000) >> 32,
+                    (version & 0x00000000FFFF0000) >> 16,
+                    version & 0x000000000000FFFF);
+            }
+        }
+
+        private void UpdateNetworkInfo()
+        {
+            this.DeviceName.Text = DeviceInfoPresenter.GetDeviceName();
+            this.IPAddress1.Text = NetworkPresenter.GetCurrentIpv4Address();
+        }
+
     }
 }

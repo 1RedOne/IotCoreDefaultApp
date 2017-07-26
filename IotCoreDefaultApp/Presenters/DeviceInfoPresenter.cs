@@ -1,31 +1,11 @@
-﻿/*
-    Copyright(c) Microsoft Open Technologies, Inc. All rights reserved.
+﻿// Copyright (c) Microsoft. All rights reserved.
 
-    The MIT License(MIT)
-
-    Permission is hereby granted, free of charge, to any person obtaining a copy
-    of this software and associated documentation files(the "Software"), to deal
-    in the Software without restriction, including without limitation the rights
-    to use, copy, modify, merge, publish, distribute, sublicense, and / or sell
-    copies of the Software, and to permit persons to whom the Software is
-    furnished to do so, subject to the following conditions :
-
-    The above copyright notice and this permission notice shall be included in
-    all copies or substantial portions of the Software.
-
-    THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
-    IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
-    FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT.IN NO EVENT SHALL THE
-    AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
-    LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
-    OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
-    THE SOFTWARE.
-*/
 
 using System;
 using System.Linq;
 using Windows.Networking;
 using Windows.Networking.Connectivity;
+using IoTCoreDefaultApp.Utils;
 
 namespace IoTCoreDefaultApp
 {
@@ -33,36 +13,72 @@ namespace IoTCoreDefaultApp
     {
         public static string GetDeviceName()
         {
-            var hostname = NetworkInformation.GetHostNames()
-                .FirstOrDefault(x => x.Type == HostNameType.DomainName);
-            if (hostname != null)
+            try
             {
-                return hostname.CanonicalName;
+                var hostname = NetworkInformation.GetHostNames()
+                    .FirstOrDefault(x => x.Type == HostNameType.DomainName);
+                if (hostname != null)
+                {
+                    return hostname.CanonicalName;
+                }
             }
-            return "<no device name>";
+            catch (Exception)
+            {
+                // do nothing
+                // in some (strange) cases NetworkInformation.GetHostNames() fails... maybe a bug in the API...
+            }
+            var loader = new Windows.ApplicationModel.Resources.ResourceLoader();
+            return loader.GetString("NoDeviceName");
         }
 
         public static string GetBoardName()
         {
             var loader = new Windows.ApplicationModel.Resources.ResourceLoader();
-#if MBM
-            return loader.GetString("MBMName");
-#elif RPI
-            return loader.GetString("Rpi2Name");
-#else
-            return loader.GetString("GenericBoardName");
-#endif
+            string boardName;
+
+            switch (DeviceTypeInformation.Type)
+            {
+                case DeviceTypes.RPI3:
+                case DeviceTypes.RPI2:
+                    boardName = DeviceTypeInformation.ProductName;
+                    if (string.IsNullOrEmpty(boardName))
+                    {
+                        boardName = loader.GetString( (DeviceTypeInformation.Type == DeviceTypes.RPI2) ? "Rpi2Name" : "Rpi3Name");
+                    }
+                    break;
+
+                case DeviceTypes.MBM:
+                    boardName = loader.GetString("MBMName");
+                    break;
+
+                case DeviceTypes.DB410:
+                    boardName = loader.GetString("DB410Name");
+                    break;
+
+                default:
+                    boardName = loader.GetString("GenericBoardName");
+                    break;
+            }
+            return boardName;
         }
 
         public static Uri GetBoardImageUri()
         {
-#if MBM
-            return new Uri("ms-appx:///Assets/MBMBoard.png");
-#elif RPI
-            return new Uri("ms-appx:///Assets/RaspberryPiBoard.png");
-#else
-            return new Uri("ms-appx:///Assets/GenericBoard.png");
-#endif
+            switch (DeviceTypeInformation.Type)
+            {
+                case DeviceTypes.RPI3:
+                case DeviceTypes.RPI2:
+                    return new Uri("ms-appx:///Assets/RaspberryPiBoard.png");
+
+                case DeviceTypes.MBM:
+                    return new Uri("ms-appx:///Assets/MBMBoard.png");
+
+                case DeviceTypes.DB410:
+                    return new Uri("ms-appx:///Assets/DB410Board.png");
+
+                default:
+                    return new Uri("ms-appx:///Assets/GenericBoard.png");
+            }
         }
     }
 }

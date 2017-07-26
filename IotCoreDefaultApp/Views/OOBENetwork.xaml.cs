@@ -1,34 +1,15 @@
-﻿/*
-    Copyright(c) Microsoft Open Technologies, Inc. All rights reserved.
+﻿// Copyright (c) Microsoft. All rights reserved.
 
-    The MIT License(MIT)
 
-    Permission is hereby granted, free of charge, to any person obtaining a copy
-    of this software and associated documentation files(the "Software"), to deal
-    in the Software without restriction, including without limitation the rights
-    to use, copy, modify, merge, publish, distribute, sublicense, and / or sell
-    copies of the Software, and to permit persons to whom the Software is
-    furnished to do so, subject to the following conditions :
-
-    The above copyright notice and this permission notice shall be included in
-    all copies or substantial portions of the Software.
-
-    THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
-    IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
-    FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT.IN NO EVENT SHALL THE
-    AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
-    LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
-    OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
-    THE SOFTWARE.
-*/
 using System;
+using System.Collections.Generic;
+using System.Diagnostics;
 using Windows.Devices.WiFi;
+using Windows.Networking.Connectivity;
 using Windows.Security.Credentials;
-using Windows.System.Threading;
 using Windows.UI.Core;
 using Windows.UI.Xaml;
 using Windows.UI.Xaml.Controls;
-using Windows.UI.Xaml.Input;
 
 // The Blank Page item template is documented at http://go.microsoft.com/fwlink/?LinkId=234238
 
@@ -39,22 +20,49 @@ namespace IoTCoreDefaultApp
     /// </summary>
     public sealed partial class OOBENetwork : Page
     {
-        private NetworkPresenter networkPresenter;
+        private NetworkPresenter networkPresenter = new NetworkPresenter();
+        private CoreDispatcher OOBENetworkPageDispatcher;
         private bool Automatic = true;
         private string CurrentPassword = string.Empty;
 
         public OOBENetwork()
         {
             this.InitializeComponent();
+            OOBENetworkPageDispatcher = Window.Current.Dispatcher;
+
+            NetworkInformation.NetworkStatusChanged += NetworkInformation_NetworkStatusChanged;
+
+            this.NavigationCacheMode = Windows.UI.Xaml.Navigation.NavigationCacheMode.Enabled;
+
+            this.DataContext = LanguageManager.GetInstance();
+
+            this.Loaded += async (sender, e) =>
+            {
+                await OOBENetworkPageDispatcher.RunAsync(CoreDispatcherPriority.Low, () => {
+                    SetupNetwork();
+                });
+            };
+        }
+
+        private void SetupNetwork()
+        {
             SetupEthernet();
             SetupWifi();
+        }
+
+        private async void NetworkInformation_NetworkStatusChanged(object sender)
+        {
+            await OOBENetworkPageDispatcher.RunAsync(CoreDispatcherPriority.Low, () =>
+            {
+                SetupNetwork();
+            });
         }
 
         private void SetupEthernet()
         {
             var ethernetProfile = NetworkPresenter.GetDirectConnectionName();
 
-            if (ethernetProfile.Equals("None found"))
+            if (ethernetProfile == null)
             {
                 NoneFoundText.Visibility = Visibility.Visible;
                 DirectConnectionStackPanel.Visibility = Visibility.Collapsed;
@@ -68,16 +76,26 @@ namespace IoTCoreDefaultApp
 
         private async void SetupWifi()
         {
-            networkPresenter = new NetworkPresenter();
-
-            if (await NetworkPresenter.WifiIsAvailable())
+            if (await networkPresenter.WifiIsAvailable())
             {
-                var networks = await networkPresenter.GetAvailableNetworks();
+                IList<WiFiAvailableNetwork> networks;
+                try
+                {
+                    networks = await networkPresenter.GetAvailableNetworks();
+                }
+                catch (Exception e)
+                {
+                    Debug.WriteLine(String.Format("Error scanning: 0x{0:X}: {1}", e.HResult, e.Message));
+                    NoWifiFoundText.Text = e.Message;
+                    NoWifiFoundText.Visibility = Visibility.Visible;
+                    return;
+                }
 
                 if (networks.Count > 0)
                 {
+                    
                     WifiListView.ItemsSource = networks;
-
+                  
                     NoWifiFoundText.Visibility = Visibility.Collapsed;
                     WifiListView.Visibility = Visibility.Visible;
                     return;
@@ -94,19 +112,17 @@ namespace IoTCoreDefaultApp
 
             foreach(var item in e.RemovedItems)
             {
-                var listViewItem = listView.ContainerFromItem(item) as ListViewItem;
-                listViewItem.ContentTemplate = WifiInitialState;
+                SwitchToItemState(item, WifiInitialState, true);
             }
 
             foreach(var item in e.AddedItems)
             {
                 Automatic = true;
-                var listViewItem = listView.ContainerFromItem(item) as ListViewItem;
-                listViewItem.ContentTemplate = WifiConnectState;
+                SwitchToItemState(item, WifiConnectState, true);
             }
         }
 
-        private void ConnectButton_Tapped(object sender, TappedRoutedEventArgs e)
+        private void ConnectButton_Clicked(object sender, RoutedEventArgs e)
         {
             var button = sender as Button;
             var network = button.DataContext as WiFiAvailableNetwork;
@@ -116,7 +132,7 @@ namespace IoTCoreDefaultApp
             }
             else
             {
-                SwitchToItemState(network, WifiPasswordState);
+                SwitchToItemState(network, WifiPasswordState, false);
             }
         }
 
@@ -128,13 +144,14 @@ namespace IoTCoreDefaultApp
 
             await dispatcher.RunAsync(CoreDispatcherPriority.Normal, () =>
             {
-                SwitchToItemState(network, WifiConnectingState);
+                SwitchToItemState(network, WifiConnectingState, false);
             });
 
             if (await didConnect)
             {
                 await dispatcher.RunAsync(CoreDispatcherPriority.Normal, () =>
                 {
+                    CortanaHelper.LaunchCortanaToConsentPageAsyncIfNeeded();
                     NavigationUtils.NavigateToScreen(typeof(MainPage));
                 });
             }
@@ -142,13 +159,13 @@ namespace IoTCoreDefaultApp
             {
                 await dispatcher.RunAsync(CoreDispatcherPriority.Normal, () =>
                 {
-                    var item = SwitchToItemState(network, WifiInitialState);
+                    var item = SwitchToItemState(network, WifiInitialState, false);
                     item.IsSelected = false;
                 });
             }
         }
-
-        private void NextButton_Tapped(object sender, TappedRoutedEventArgs e)
+       
+        private void NextButton_Clicked(object sender, RoutedEventArgs e)
         {
             var button = sender as Button;
             PasswordCredential credential;
@@ -169,32 +186,39 @@ namespace IoTCoreDefaultApp
             ConnectToWifi(network, credential, Window.Current.Dispatcher);
         }
 
-        private void CancelButton_Tapped(object sender, TappedRoutedEventArgs e)
+        private void CancelButton_Clicked(object sender, RoutedEventArgs e)
         {
             var button = sender as Button;
-            var item = SwitchToItemState(button.DataContext, WifiInitialState);
+            var item = SwitchToItemState(button.DataContext, WifiInitialState, false);
             item.IsSelected = false;
         }
 
-        private ListViewItem SwitchToItemState(object dataContext, DataTemplate template)
+        private ListViewItem SwitchToItemState(object dataContext, DataTemplate template, bool forceUpdate)
         {
+            if (forceUpdate)
+            {
+                WifiListView.UpdateLayout();
+            }
             var item = WifiListView.ContainerFromItem(dataContext) as ListViewItem;
-            item.ContentTemplate = template;
-
+            if (item != null)
+            {
+                item.ContentTemplate = template;
+            }
             return item;
         }
 
-        private void BackButton_Tapped(object sender, TappedRoutedEventArgs e)
+        private void BackButton_Clicked(object sender, RoutedEventArgs e)
         {
             NavigationUtils.GoBack();
         }
 
-        private void SkipButton_Tapped(object sender, TappedRoutedEventArgs e)
+        private void SkipButton_Clicked(object sender, RoutedEventArgs e)
         {
+            CortanaHelper.LaunchCortanaToConsentPageAsyncIfNeeded();
             NavigationUtils.NavigateToScreen(typeof(MainPage));
         }
 
-        private void ConnectAutomaticallyCheckBox_Checked(object sender, RoutedEventArgs e)
+        private void ConnectAutomaticallyCheckBox_Changed(object sender, RoutedEventArgs e)
         {
             var checkbox = sender as CheckBox;
 
@@ -205,6 +229,22 @@ namespace IoTCoreDefaultApp
         {
             var passwordBox = sender as PasswordBox;
             CurrentPassword = passwordBox.Password;
+        }
+
+        private void RefreshButton_Click(object sender, RoutedEventArgs e)
+        {
+            RefreshButton.IsEnabled = false;
+            SetupWifi();
+            RefreshButton.IsEnabled = true;
+        }
+
+        private void WifiPasswordBox_Loaded(object sender, RoutedEventArgs e)
+        {
+            var passwordBox = sender as PasswordBox;
+            if (passwordBox != null)
+            {
+                passwordBox.Focus(FocusState.Programmatic);
+            }
         }
     }
 }

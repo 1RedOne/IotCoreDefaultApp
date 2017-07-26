@@ -1,57 +1,131 @@
-﻿/*
-    Copyright(c) Microsoft Open Technologies, Inc. All rights reserved.
+﻿// Copyright (c) Microsoft. All rights reserved.
 
-    The MIT License(MIT)
-
-    Permission is hereby granted, free of charge, to any person obtaining a copy
-    of this software and associated documentation files(the "Software"), to deal
-    in the Software without restriction, including without limitation the rights
-    to use, copy, modify, merge, publish, distribute, sublicense, and / or sell
-    copies of the Software, and to permit persons to whom the Software is
-    furnished to do so, subject to the following conditions :
-
-    The above copyright notice and this permission notice shall be included in
-    all copies or substantial portions of the Software.
-
-    THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
-    IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
-    FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT.IN NO EVENT SHALL THE
-    AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
-    LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
-    OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
-    THE SOFTWARE.
-*/
 using System;
 using System.Collections.Generic;
+using System.ComponentModel;
 using System.Linq;
+using Windows.ApplicationModel.Resources.Core;
 using Windows.Globalization;
 using Windows.System;
 using Windows.System.UserProfile;
 
 namespace IoTCoreDefaultApp
 {
-    public class LanguageManager
+    public class LanguageManager : INotifyPropertyChanged
     {
+        private readonly string[] InputLanguages = {
+            "af",      "ar-SA",    "as",         "az-Cyrl",    "az-Latn",
+            "ba-Cyrl", "be",       "bg",         "bn-IN",      "bo-Tibt",
+            "bs-Cyrl", "chr-Cher", "cs",         "cy",         "da",
+            "de-CH",   "de-DE",    "dv",         "el",         "en-CA",
+            "en-GB",   "en-IE",    "en-IN",      "en-US",      "es-ES",
+            "es-MX",   "et",       "fa",         "fi",         "fo",
+            "fr-BE",   "fr-CA",    "fr-CH",      "fr-FR",      "gn",
+            "gu",      "ha-Latn",  "haw-Latn",   "he",         "hi",
+            "hr-HR",   "hsb",      "hu",         "hy",         "ig-Latn",
+            "is",      "it-IT",    "iu-Latn",    "ja",         "ka",
+            "kk",      "kl",       "km",         "kn",         "ko",
+            "ku-Arab", "ky-Cyrl",  "lb",         "lo",         "lt",
+            "lv",      "mi-Latn",  "mk",         "ml",         "mn-Cyrl",
+            "mn-Mong", "mr",       "mt",         "my",         "nb",
+            "ne-NP",   "nl-BE",    "nl-NL",      "nso",        "or",
+            "pa",      "pl",       "ps",         "pt-BR",      "pt-PT",
+            "ro-RO",   "sah-Cyrl", "se-Latn-NO", "se-Latn-SE", "si",
+            "sk",      "sl",       "sq",         "sv-SE",      "syr-Syrc",
+            "ta-IN",   "te",       "tg-Cyrl",    "th",         "tk-Latn",
+            "tn-ZA",   "tr",       "tt-Cyrl",    "tzm-Latn",   "tzm-Tfng",
+            "ug-Arab", "uk",       "ur-PK",      "uz-Cyrl",    "vi",
+            "wo-Latn", "yo-Latn"
+            };
+
         private Dictionary<string, string> displayNameToLanguageMap;
+        private Dictionary<string, string> displayNameToInputLanguageMap;
         public IReadOnlyList<string> LanguageDisplayNames
         {
             get;
+            set;
         }
 
-        public LanguageManager()
+        public IReadOnlyList<string> InputLanguageDisplayNames
         {
-            displayNameToLanguageMap = ApplicationLanguages.Languages.Select(tag =>
+            get;
+            set;
+        }
+
+        private LanguageManager()
+        {
+            displayNameToLanguageMap = ApplicationLanguages.ManifestLanguages.Select(tag =>
             {
                 var lang = new Language(tag);
-                return new KeyValuePair<string, string>(lang.DisplayName, lang.LanguageTag);
+                return new KeyValuePair<string, string>(lang.NativeName, lang.LanguageTag);
             }).ToDictionary(keyitem => keyitem.Key, valueItem => valueItem.Value);
 
             LanguageDisplayNames = displayNameToLanguageMap.Keys.ToList();
+
+            displayNameToInputLanguageMap = InputLanguages.Select(tag =>
+            {
+                var lang = new Language(tag);
+                return new KeyValuePair<string, string>(lang.NativeName, lang.LanguageTag);
+            }).ToDictionary(keyitem => keyitem.Key, valueItem => valueItem.Value);
+
+            InputLanguageDisplayNames = displayNameToInputLanguageMap.Keys.ToList();
         }
 
-        public void UpdateLanguage(string displayName)
+
+        private static LanguageManager _LanguageManager = null;
+        public static LanguageManager GetInstance()
         {
-            ApplicationLanguages.PrimaryLanguageOverride = GetLanguageTagFromDisplayName(displayName);
+            if (_LanguageManager == null)
+            {
+                _LanguageManager = new LanguageManager();
+            }
+            return _LanguageManager;
+        }
+
+        public bool UpdateLanguage(string displayName)
+        {
+            var currentLang = ApplicationLanguages.PrimaryLanguageOverride;
+            var newLang = GetLanguageTagFromDisplayName(displayName);
+            if (currentLang != newLang)
+            {
+                // Do this twice because in Release mode, once isn't enough
+                // to change the current CultureInfo (changing the WaitOne delay
+                // doesn't help).
+                for (int i = 0; i < 2; i++)
+                {
+                    ApplicationLanguages.PrimaryLanguageOverride = newLang;
+
+                    // Refresh the resources in new language
+                    ResourceContext.GetForCurrentView().Reset();
+                    ResourceContext.GetForViewIndependentUse().Reset();
+
+                    // Where seems to be some delay between when this is reset and when
+                    // we can start re-evaluating the resources.  Without a pause, sometimes
+                    // the first resource remains the previous language.
+                    new System.Threading.ManualResetEvent(false).WaitOne(100);
+                }
+
+                OnPropertyChanged("Item[]");
+                return true;
+            }
+            return false;
+        }
+
+        public bool UpdateInputLanguage(string displayName)
+        {
+            var currentLang = Windows.Globalization.Language.CurrentInputMethodLanguageTag;
+            var newLang = GetInputLanguageTagFromDisplayName(displayName);
+            if (currentLang != newLang)
+            {
+                if (!Language.TrySetInputMethodLanguageTag(newLang))
+                {
+                    return false;
+                }
+
+                OnPropertyChanged("Item[]");
+                return true;
+            }
+            return false;
         }
 
         private string GetLanguageTagFromDisplayName(string displayName)
@@ -61,7 +135,20 @@ namespace IoTCoreDefaultApp
 
             if (newLang == null)
             {
-                throw new ArgumentException("displayName");
+                throw new ArgumentException("Failed to get language tag for "+ displayName);
+            }
+
+            return newLang;
+        }
+
+        private string GetInputLanguageTagFromDisplayName(string displayName)
+        {
+            string newLang;
+            displayNameToInputLanguageMap.TryGetValue(displayName, out newLang);
+
+            if (newLang == null)
+            {
+                throw new ArgumentException("Failed to get language tag for "+ displayName);
             }
 
             return newLang;
@@ -69,37 +156,44 @@ namespace IoTCoreDefaultApp
 
         public static string GetCurrentLanguageDisplayName()
         {
-            var lang = new Language(GlobalizationPreferences.Languages[0]);
-
-            return lang.DisplayName;
-        }
-
-        public static IReadOnlyList<string> GetSupportedTimeZones()
-        {
-            return TimeZoneSettings.SupportedTimeZoneDisplayNames;
-        }
-
-        public static string GetCurrentTimeZone()
-        {
-            return TimeZoneSettings.CurrentTimeZoneDisplayName;
-        }
-
-        public static void ChangeTimeZone(string timeZone)
-        {
-            if (!TimeZoneSettings.CanChangeTimeZone)
+            var langTag = ApplicationLanguages.PrimaryLanguageOverride;
+            if (String.IsNullOrEmpty(langTag))
             {
-                return;
+                langTag = GlobalizationPreferences.Languages[0];
             }
+            var lang = new Language(langTag);
 
-            if (!TimeZoneSettings.SupportedTimeZoneDisplayNames.Contains(timeZone))
-            {
-                throw new ArgumentException("timeZone");
-            }
-
-            TimeZoneSettings.ChangeTimeZoneByDisplayName(timeZone);
-
-            // "Workaround" to flush TimeZoneInfo cache. Yes, this really works.
-            TimeZoneInfo.ConvertTime(DateTime.MinValue, TimeZoneInfo.Local); 
+            return lang.NativeName;
         }
+
+        public static string GetCurrentInputLanguageDisplayName()
+        {
+            var langTag = Windows.Globalization.Language.CurrentInputMethodLanguageTag;
+            var lang = new Language(langTag);
+
+            return lang.NativeName;
+        }
+
+        public string this[string key]
+        {
+            get
+            {
+                var resourceLoader = Windows.ApplicationModel.Resources.ResourceLoader.GetForCurrentView();
+                var localized = resourceLoader.GetString(key);
+                return localized;
+            }
+        }
+
+        public void OnPropertyChanged(string property)
+        {
+            var eventInst = PropertyChanged;
+            if (eventInst != null)
+            {
+                eventInst.Invoke(this, new PropertyChangedEventArgs(property));
+            }
+        }
+
+        public event PropertyChangedEventHandler PropertyChanged;
+
     }
 }
